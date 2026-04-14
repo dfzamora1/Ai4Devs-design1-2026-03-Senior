@@ -1271,5 +1271,261 @@ erDiagram
 
 ---
 
+## 15. Arquitectura del sistema — Diagramas C4
+
+El modelo C4 describe la arquitectura del sistema en cuatro niveles de zoom progresivo. Se presentan aquí los tres primeros niveles, que cubren el alcance actual del diseño.
+
+---
+
+### Nivel 1 — Diagrama de Contexto (System Context)
+
+Muestra el sistema ATS en su entorno: quién lo usa y con qué sistemas externos se relaciona. Es el mapa de más alto nivel — sin detalles técnicos.
+
+```mermaid
+graph TB
+    subgraph Usuarios["👥 Usuarios"]
+        C(["👤 Candidato\nPersona que aplica\na una vacante"])
+        R(["👤 Reclutador\nGestiona vacantes\ny pipeline"])
+        HM(["👤 Hiring Manager\nRevisa candidatos\ny toma decisiones"])
+        AD(["👤 Admin RRHH\nConfigura el sistema\ny consulta reportes"])
+    end
+
+    subgraph Core["🟦 Sistema ATS (LTI)"]
+        ATS["🖥️ ATS — Sistema de\nGestión de Candidatos\n\nPermite publicar vacantes,\ngestionar aplicaciones y\ncoordinar el proceso de selección\nde extremo a extremo"]
+    end
+
+    subgraph Externos["🌐 Sistemas externos"]
+        LI["LinkedIn\nOAuth + importación\nde perfil"]
+        JP["Portales de empleo\nIndeed, InfoJobs,\nGetOnBoard..."]
+        CAL["Servicios de calendario\nGoogle Calendar\nMicrosoft Outlook"]
+        EMAIL["Servicio de email\nSendGrid / AWS SES"]
+        HRIS["HRIS corporativo\nWorkday / BambooHR\nSAP SuccessFactors"]
+        STORE["Almacenamiento\nen la nube\nAWS S3 / GCS"]
+    end
+
+    C -->|"Explora vacantes,\naplica, hace seguimiento"| ATS
+    R -->|"Publica vacantes,\ngestiona pipeline y\nagenda entrevistas"| ATS
+    HM -->|"Revisa perfiles\ny deja evaluaciones"| ATS
+    AD -->|"Configura empresa,\nusers y pipelines"| ATS
+
+    ATS -->|"OAuth 2.0 /\nAPI de perfil"| LI
+    ATS -->|"Publica vacantes\nvía API / RSS"| JP
+    ATS -->|"Sincroniza eventos\n(ICS / API)"| CAL
+    ATS -->|"Envía emails\ntransaccionales"| EMAIL
+    ATS -->|"Sincroniza empleados\ny onboarding"| HRIS
+    ATS -->|"Almacena CVs\ny documentos"| STORE
+
+    classDef user fill:#EEEDFE,stroke:#534AB7,stroke-width:1.5px,color:#26215C
+    classDef system fill:#E6F1FB,stroke:#185FA5,stroke-width:2px,color:#042C53
+    classDef external fill:#F1EFE8,stroke:#5F5E5A,stroke-width:1px,color:#2C2C2A
+
+    class C,R,HM,AD user
+    class ATS system
+    class LI,JP,CAL,EMAIL,HRIS,STORE external
+```
+
+---
+
+### Nivel 2 — Diagrama de Contenedores (Containers)
+
+Descompone el sistema ATS en sus aplicaciones y servicios principales. Muestra qué tecnologías están implicadas y cómo se comunican entre sí.
+
+```mermaid
+graph TB
+    C(["👤 Candidato\n(navegador / mobile)"])
+    R(["👤 Reclutador /\nHiring Manager\n(navegador)"])
+
+    subgraph ATS["🟦 Sistema ATS (LTI)"]
+
+        subgraph Frontend["Capa de presentación"]
+            CP["🌐 Portal de Candidatos\nReact SPA\n\nBolsa de trabajo pública,\nregistro, aplicación\ny seguimiento"]
+            RP["🌐 Panel de Reclutador\nReact SPA\n\nGestión de vacantes,\npipeline kanban,\nagenda y reportes"]
+        end
+
+        subgraph Backend["Capa de aplicación"]
+            API["⚙️ API Gateway\nNode.js / Express\n\nEnrutamiento, autenticación\nJWT, rate limiting\ny validación de entrada"]
+            SVC["⚙️ Core Services\nNode.js (módulos)\n\nVacancies · Applications\nCandidates · Pipeline\nInterviews · Offers\nReports"]
+            NOTIF["⚙️ Notification Service\nNode.js + Queue\n\nOrquesta emails,\nrecordatorios y\ncambios de estado"]
+            SEARCH["⚙️ Search Service\nElasticsearch\n\nBúsqueda full-text\nde vacantes y\ncandidatos"]
+        end
+
+        subgraph Data["Capa de datos"]
+            DB[("🗄️ Base de datos principal\nPostgreSQL\n\nTodas las entidades\ndel modelo de datos")]
+            CACHE[("⚡ Caché\nRedis\n\nSesiones, rate limiting\ny resultados frecuentes")]
+            QUEUE[("📨 Cola de mensajes\nRabbitMQ / SQS\n\nNotificaciones asíncronas\ny jobs en background")]
+            FILES[("📁 Almacenamiento\nAWS S3\n\nCVs, cartas de\npresentación y\ndocumentos adjuntos")]
+        end
+
+    end
+
+    subgraph Externos["Sistemas externos"]
+        EMAIL["📧 SendGrid\nEmails transaccionales"]
+        LI["🔗 LinkedIn API\nOAuth + perfil"]
+        CAL["📅 Google / Outlook\nCalendario + ICS"]
+    end
+
+    C -->|"HTTPS"| CP
+    R -->|"HTTPS"| RP
+
+    CP -->|"REST / JSON\nHTTPS"| API
+    RP -->|"REST / JSON\nHTTPS"| API
+
+    API -->|"Llama a\nmódulos de negocio"| SVC
+    API -->|"Consultas\nde búsqueda"| SEARCH
+    SVC -->|"Lee / escribe"| DB
+    SVC -->|"Lee / escribe"| CACHE
+    SVC -->|"Publica eventos"| QUEUE
+    SVC -->|"Sube / descarga\narchivos"| FILES
+    QUEUE -->|"Consume eventos"| NOTIF
+    NOTIF -->|"SMTP API"| EMAIL
+    NOTIF -->|"API de calendario"| CAL
+    SVC -->|"OAuth 2.0"| LI
+    SEARCH -->|"Indexa desde"| DB
+
+    classDef user fill:#EEEDFE,stroke:#534AB7,stroke-width:1px,color:#26215C
+    classDef spa fill:#E1F5EE,stroke:#0F6E56,stroke-width:1px,color:#04342C
+    classDef service fill:#E6F1FB,stroke:#185FA5,stroke-width:1px,color:#042C53
+    classDef data fill:#FAEEDA,stroke:#854F0B,stroke-width:1px,color:#412402
+    classDef external fill:#F1EFE8,stroke:#5F5E5A,stroke-width:1px,color:#2C2C2A
+
+    class C,R user
+    class CP,RP spa
+    class API,SVC,NOTIF,SEARCH service
+    class DB,CACHE,QUEUE,FILES data
+    class EMAIL,LI,CAL external
+```
+
+---
+
+### Nivel 3 — Diagrama de Componentes (Components)
+
+Descompone el contenedor **Core Services** en sus módulos internos. Muestra las responsabilidades de cada componente y cómo fluyen las dependencias entre ellos.
+
+```mermaid
+graph TB
+    API["⚙️ API Gateway\n(entrada)"]
+    DB[("🗄️ PostgreSQL")]
+    QUEUE[("📨 Cola de mensajes")]
+    S3[("📁 S3")]
+
+    subgraph CORE["⚙️ Core Services — módulos internos"]
+
+        subgraph PUB["Dominio: Publicación"]
+            VM["VacancyModule\n\nCRUD de vacantes\nPublicación multicanal\nGestión de pipeline\nConfiguración de etapas"]
+            PM["PipelineModule\n\nPlantillas de proceso\nOrden de etapas\nReglas de notificación\nEtapas terminales"]
+        end
+
+        subgraph SEL["Dominio: Selección"]
+            AM["ApplicationModule\n\nRecepción de aplicaciones\nMovimiento entre etapas\nScreening y knock-out\nHistorial de cambios"]
+            IM["InterviewModule\n\nAgenda de entrevistas\nConfirmación de candidato\nGeneración de ICS\nRecordatorios"]
+            EM["EvaluationModule\n\nNotas de entrevistadores\nRating y recomendación\nVistas de panel\nAggregación de scores"]
+        end
+
+        subgraph OFERTA["Dominio: Cierre"]
+            OM["OfferModule\n\nEmisión de ofertas\nCiclo de vida de oferta\nRespuesta del candidato\nCierre de vacante"]
+        end
+
+        subgraph IDENTIDAD["Dominio: Identidad"]
+            CM["CandidateModule\n\nPerfil del candidato\nGestión de documentos\nConsentimiento GDPR\nTalent pool / Tags"]
+            UM["UserModule\n\nAutenticación JWT\nRoles y permisos\nSSO (Google / LinkedIn)\nGestión de sesiones"]
+            TM["TenantModule\n\nConfiguración por empresa\nDepartamentos\nBranding del portal\nPlanes y límites"]
+        end
+
+        subgraph SOPORTE["Dominio: Soporte"]
+            NM["NotificationModule\n\nPlantillas de email\nDisparo de eventos\nPreferencias de usuario\nCola de envíos"]
+            RM["ReportModule\n\nTime-to-hire\nFunnel por etapa\nFuentes de candidatos\nExportación CSV/PDF"]
+            AL["AuditModule\n\nRegistro de acciones\nTrazabilidad GDPR\nExportación de datos\nRetención configurable"]
+        end
+
+    end
+
+    API -->|"Enruta peticiones"| VM
+    API -->|"Enruta peticiones"| AM
+    API -->|"Enruta peticiones"| IM
+    API -->|"Enruta peticiones"| EM
+    API -->|"Enruta peticiones"| OM
+    API -->|"Enruta peticiones"| CM
+    API -->|"Enruta peticiones"| UM
+    API -->|"Enruta peticiones"| TM
+    API -->|"Enruta peticiones"| RM
+
+    VM -->|"Usa pipeline"| PM
+    AM -->|"Usa etapas de"| PM
+    AM -->|"Actualiza perfil"| CM
+    IM -->|"Vinculada a"| AM
+    EM -->|"Vinculada a"| IM
+    EM -->|"Vinculada a"| AM
+    OM -->|"Vinculada a"| AM
+
+    AM -->|"Publica eventos\nde cambio de estado"| QUEUE
+    IM -->|"Publica evento\nde confirmación"| QUEUE
+    OM -->|"Publica evento\nde oferta"| QUEUE
+    QUEUE -->|"Consume"| NM
+
+    VM & AM & IM & EM & OM & CM & UM & TM & NM & RM -->|"Lee / escribe"| DB
+    CM -->|"Sube / descarga\ndocumentos"| S3
+    AL -->|"Lee de"| DB
+
+    classDef module fill:#E6F1FB,stroke:#185FA5,stroke-width:1px,color:#042C53
+    classDef infra fill:#FAEEDA,stroke:#854F0B,stroke-width:1px,color:#412402
+    classDef gateway fill:#E1F5EE,stroke:#0F6E56,stroke-width:1px,color:#04342C
+
+    class VM,PM,AM,IM,EM,OM,CM,UM,TM,NM,RM,AL module
+    class DB,QUEUE,S3 infra
+    class API gateway
+```
+
+---
+
+### 15.4 Decisiones de arquitectura reflejadas en los diagramas
+
+**Multi-tenancy en el núcleo.** El `TenantModule` es transversal a todos los demás: cada petición al API Gateway lleva el contexto de empresa (`company_id`) resuelto desde el JWT. Todos los módulos filtran automáticamente por tenant sin que el código de negocio tenga que recordarlo.
+
+**Comunicación asíncrona para notificaciones.** El `ApplicationModule`, `InterviewModule` y `OfferModule` no llaman directamente al servicio de email — publican eventos en la cola. Esto desacopla el core del canal de comunicación, permite reintentos automáticos si SendGrid falla, y hace que añadir un canal nuevo (SMS, Slack) sea un cambio de configuración, no de código.
+
+**Búsqueda separada del core.** El `Search Service` con Elasticsearch se alimenta de la base de datos principal mediante indexación asíncrona. La búsqueda full-text de vacantes y candidatos nunca toca PostgreSQL directamente, lo que protege el rendimiento del sistema transaccional bajo carga de búsqueda.
+
+**S3 solo accesible desde CandidateModule.** Los documentos (CVs, cartas) se almacenan en S3 con URLs firmadas de tiempo limitado. Ningún otro módulo accede a S3 directamente — siempre pasan por `CandidateModule`, que centraliza las validaciones de tipo de archivo, tamaño y escaneo de malware.
+
+**AuditModule como observador pasivo.** El `AuditModule` no es llamado por los demás módulos — lee eventos de la misma cola de mensajes que `NotificationModule`. Esto garantiza que el log de auditoría no puede ser omitido por error (nadie tiene que "acordarse" de llamarlo) y no añade latencia a las operaciones de negocio.
+
+---
+
+### DiagramGPT
+title ATS Microservices Architecture (Computrabajo-style)
+
+CDN [icon: globe]
+
+Frontend [icon: react] {
+  Web Application [icon: monitor]
+}
+
+"On-Premise Infrastructure" [icon: server] {
+  Nginx Load Balancer [icon: nginx]
+  
+  API Gateway [icon: aws-api-gateway]
+  
+  Microservices [icon: docker, color: blue] {
+    Job Listings Service [icon: list]
+    Candidate Service [icon: users]
+    Application Service [icon: file-text]
+    Search Service [icon: search]
+    Auth Service [icon: lock]
+    Notification Service [icon: bell]
+    Company Service [icon: briefcase]
+  }
+  
+  Oracle Database [icon: database]
+}
+
+// Connections
+CDN > Web Application
+Web Application > Nginx Load Balancer
+Nginx Load Balancer > API Gateway
+
+API Gateway > Microservices
+
+Microservices <> Oracle Database
+
 *PRD v1.0 — Portal de Candidatos ATS — LTI-DZ2*
 *Próxima revisión planificada: tras el primer sprint de discovery técnico*
